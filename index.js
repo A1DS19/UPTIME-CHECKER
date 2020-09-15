@@ -1,10 +1,38 @@
 const http = require('http');
+const https = require('https');
 const url = require('url');
 const StringDecoder = require('string_decoder').StringDecoder;
+const config = require('./config');
+const fs = require('fs');
 
-const PORT = 3000 || process.env.PORT;
+//Instaciar server http
+const httpServer = http.createServer((req, res) => {
+  unifiedServer(req, res);
+});
 
-const server = http.createServer((req, res) => {
+httpServer.listen(config.httpPort, () =>
+  console.log(
+    `SERVIDOR INICIADO\nPUERTO HTTP: ${config.httpPort}\nAMBIENTE: ${config.envName}`
+  )
+);
+
+//Instaciar server https
+const httsServerOptions = {
+  key: fs.readFileSync('./https/key.pem'),
+  cert: fs.readFileSync('./https/cert.pem'),
+};
+
+const httpsServer = https.createServer(httsServerOptions, (req, res) => {
+  unifiedServer(req, res);
+});
+httpsServer.listen(config.httpsPort, () =>
+  console.log(
+    `SERVIDOR INICIADO\nPUERTO HTTPS: ${config.httpsPort}\nAMBIENTE: ${config.envName}`
+  )
+);
+
+//Unir logica de server http y https
+const unifiedServer = (req, res) => {
   //Tomar url y parsearla
   const parsedUrl = url.parse(req.url, true);
 
@@ -16,7 +44,7 @@ const server = http.createServer((req, res) => {
   const queryStringObject = parsedUrl.query;
 
   //Tomar metodo de request
-  const reqMethod = req.method.toLowerCase();
+  const method = req.method.toLowerCase();
 
   //Tomar headers como objeto
   const headers = req.headers;
@@ -32,9 +60,47 @@ const server = http.createServer((req, res) => {
   req.on('end', () => {
     buffer += decoder.end();
 
-    res.end('Funciona?');
-    console.log(buffer);
-  });
-});
+    //Escojer el handler del request
+    const chosenHandler =
+      typeof router[trimmedPath] !== 'undefined'
+        ? router[trimmedPath]
+        : handlers.notFound;
 
-server.listen(PORT, () => console.log(`SERVIDOR INICIADO\nPUERTO: ${PORT}`));
+    //Contruir objeto para enviar a handler
+    const data = {
+      trimmedPath,
+      queryStringObject,
+      method,
+      headers,
+      payload: buffer,
+    };
+    //Devolver ruta del request a el handler en el objeto router
+    chosenHandler(data, (statusCode, payload) => {
+      statusCode = typeof statusCode == 'number' ? statusCode : 200;
+      payload = typeof payload == 'object' ? payload : {};
+
+      //Convertir payload a string
+      const payloadString = JSON.stringify(payload);
+
+      //Devolver respuesta/El header devuelve json enves texto
+      res.setHeader('Content-Type', 'application/json');
+      res.writeHead(statusCode);
+      res.end(payloadString);
+    });
+  });
+};
+
+const handlers = {};
+
+handlers.notFound = (data, callback) => {
+  //Callback devuelve 404 y ya
+  callback(404);
+};
+
+handlers.ping = (data, callback) => {
+  callback(200);
+};
+
+const router = {
+  ping: handlers.ping,
+};
